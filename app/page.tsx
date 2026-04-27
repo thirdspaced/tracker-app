@@ -51,7 +51,7 @@ export default function TrackerApp() {
 
   const mapContent = (val0: string, val1: string) => {
     const raw = ((val0 || "") + " " + (val1 || "")).toLowerCase();
-    if (/comp|math|fluency|beast|reflex|problem|addition|subtraction|zearn|number|multiplication|division|count|board|stamp|geometry|area|fraction|ba\b/.test(raw)) return "Computation";
+    if (/comp|math|fluency|beast|reflex|problem|addition|subtraction|zearn|number|multiplication|division|count|board|stamp|geometry|area|fraction|ba\b|weight/.test(raw)) return "Computation";
     if (/read|lexia|raz|book|novel/.test(raw)) return "Reading";
     if (/writ|draft|handwriting|typing|quill|spell|essay|sentence/.test(raw)) return "Writing";
     if (/comm|email|speech/.test(raw)) return "Communication";
@@ -63,7 +63,7 @@ export default function TrackerApp() {
     if (files.length === 0) return;
     setIsProcessing(true);
     setLogs([]);
-    addLog("Initializing parser...");
+    addLog("Initializing thorough row-by-row parser...");
 
     let allRecords: any[] = [];
 
@@ -73,7 +73,8 @@ export default function TrackerApp() {
       const workbook = XLSX.read(buffer, { type: 'array' });
 
       workbook.SheetNames.forEach(sheetName => {
-        if (!sheetName.toLowerCase().includes('week')) return;
+        // Process if it is a single-tab CSV, OR if the tab name contains 'week'
+        if (workbook.SheetNames.length > 1 && !sheetName.toLowerCase().includes('week')) return;
         
         const ws = workbook.Sheets[sheetName];
         const sheetData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as any[][];
@@ -134,10 +135,16 @@ export default function TrackerApp() {
             else if (statusVal === "false") status = "Missing";
             else continue;
 
+            let cleanWeekName = sheetName.trim();
+            const weekMatch = file.name.match(/Week\s*\d+/i) || sheetName.match(/Week\s*\d+/i);
+            if (weekMatch) {
+               cleanWeekName = weekMatch[0];
+            }
+
             allRecords.push({
               "AL Level": currentStudentMap[c].level,
               "Student Name": currentStudentMap[c].name,
-              "Week Number": sheetName.trim(),
+              "Week Number": cleanWeekName,
               "Content Type": currentContent,
               "Assignment": assignment,
               "Status": status
@@ -145,6 +152,12 @@ export default function TrackerApp() {
           }
         });
       });
+    }
+
+    if (allRecords.length === 0) {
+        addLog("Error: No valid student tasks found. Please ensure the file matches the standard format.");
+        setIsProcessing(false);
+        return;
     }
 
     addLog(`Extracted ${allRecords.length} task records. Building Excel workbooks...`);
@@ -170,16 +183,18 @@ export default function TrackerApp() {
       const wb = XLSX.utils.book_new();
       
       const wsMaster = XLSX.utils.json_to_sheet(levelRecords);
-      // Enable AutoFilter on Master Sheet
-      wsMaster['!autofilter'] = { ref: wsMaster['!ref'] as string };
+      if (wsMaster['!ref']) {
+          wsMaster['!autofilter'] = { ref: wsMaster['!ref'] as string };
+      }
       XLSX.utils.book_append_sheet(wb, wsMaster, "Master Sheet");
 
       const students = Array.from(new Set(levelRecords.map(r => r["Student Name"]))).sort() as string[];
       students.forEach(student => {
         const studentData = levelRecords.filter(r => r["Student Name"] === student);
         const wsStudent = XLSX.utils.json_to_sheet(studentData);
-        // Enable AutoFilter on Student Sheets
-        wsStudent['!autofilter'] = { ref: wsStudent['!ref'] as string };
+        if (wsStudent['!ref']) {
+            wsStudent['!autofilter'] = { ref: wsStudent['!ref'] as string };
+        }
         XLSX.utils.book_append_sheet(wb, wsStudent, student.substring(0, 31)); 
       });
 
@@ -197,7 +212,7 @@ export default function TrackerApp() {
           <FileSpreadsheet className="text-blue-600 w-8 h-8" />
           <h1 className="text-3xl font-bold text-gray-900">Task Tracker Processor</h1>
         </div>
-        <p className="text-gray-600 mb-8">Upload weekly CSVs. The system will filter data and generate sorted AL spreadsheets with built-in drop-down filters.</p>
+        <p className="text-gray-600 mb-8">Upload weekly CSVs. The system will search one by one and generate sorted AL spreadsheets with built-in drop-down filters.</p>
 
         <div className="border-2 border-dashed border-gray-300 rounded-lg p-10 text-center bg-gray-50 hover:bg-gray-100 transition relative">
           <input 
@@ -220,7 +235,7 @@ export default function TrackerApp() {
           disabled={files.length === 0 || isProcessing}
           className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-lg shadow transition disabled:bg-gray-400 flex justify-center items-center"
         >
-          {isProcessing ? "Processing Data..." : "Generate Filtered Trackers"}
+          {isProcessing ? "Processing Data..." : "Process & Download Excel Trackers"}
           {!isProcessing && <Download className="ml-2 w-5 h-5" />}
         </button>
 
